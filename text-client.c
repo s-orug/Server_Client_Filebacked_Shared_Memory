@@ -1,117 +1,91 @@
 #include "text-memory.h"
 pthread_mutex_t mutex;
 
-int loop = 1;
-char word[] = "the journey";//all caps, statics
+int FILE_SIZE;
+static char *FILE__;
 
 // ************** THREAD FUNCTION ************** //
-void *thread(void *arg) {                    //
-  pthread_mutex_lock(&mutex);                //
-                                             //
-  char *iptr = arg;                          //
-  if (strstr(iptr, word)) {                  //
-    fprintf(stdout, "%d\t%s\n", loop, iptr); //
-    ++loop;                                  //
-  }                                          //
-  pthread_mutex_unlock(&mutex);              //
-  pthread_exit(NULL);                        //
-} //
+
+void *thread(void *arg) {
+
+  pthread_mutex_lock(&mutex);
+
+  struct PASS *pass = (struct PASS *)arg;
+
+  for (int i = pass->start; i < pass->end; i++) {
+    if (islower(FILE__[i])) {
+      FILE__[i] = toupper(FILE__[i]);
+    } else if (isupper(FILE__[i])) {
+      FILE__[i] = tolower(FILE__[i]);
+    }
+  }
+
+  pthread_mutex_unlock(&mutex);
+  pthread_exit(NULL);
+}
+
 // ************** END OF FUNCTION************** //
 
 int main(int argc, char *argv[]) {
 
-  clock_t t;
-  t = clock();
+  char filename[M_SIZE], tmp[M_SIZE];
 
-  // **************** NAMED PIPE ***************** //
-  //
-  char *myfifo = "/tmp/myfifo", filename[64]; //
-  mkfifo(myfifo, 0666);                       //
-                                              //
-  strcpy(filename, argv[1]);                  //
-  int fd = open(myfifo, O_WRONLY);            //
-  write(fd, filename, sizeof(filename));      //
-  close(fd);                                  //
-                                              //
-  // *************** *END OF PIPE **************** //
+  // ************** NAMED PIPE W/WRITE_ONLY ***************** //
 
-  // ******** CHECKS IF THE FILE IS VALID ******** //
+  mkfifo(MYFIFO, 0666);
+  int fd = open(MYFIFO, O_WRONLY);
+  strcpy(filename, argv[1]);
+  write(fd, filename, T_SIZE);
+  close(fd);
 
-  if (!file_checker(argv[1])) {
-    fprintf(stderr, "INVALID FILE\n");
-    exit(ERROR);
-  }
+  // *************** NAMED PIPE W/READ_ONLY ****************** //
 
-  // ******* CHECKS IF THE STRING IS VALID ******* //
+  fd = open(MYFIFO, O_RDONLY);
+  read(fd, tmp, VALID_SIZE);
+  close(fd);
 
-  if (strlen(argv[2]) == 0) {
-    fprintf(stderr, "INVALID TEXT\n");
-    exit(ERROR);
-  }
+  if (strstr(VALID, tmp)) {
 
-  // ******** CREATES MEMORY AND ATTACHES ******** //
-  char *memory = attach_segment(filename);
+    pthread_t threads[THREADS];
+    struct PASS pass[THREADS];
+    pthread_mutex_init(&mutex, NULL);
 
-  // ** WAITING FOR THE SERVER TO FINISH WRITING * //
-  while (memory[sizeof(memory)] != EOT);
-   {
-    /* Waits */
-  }
+    int fdp = open(filename, O_RDWR, S_IRUSR | S_IWUSR);
+    struct stat sb;
+    fstat(fdp, &sb);
 
-  // ***** CONVERTING 1D *CHAR to 2D **CHAR ****** //
+    FILE__ = mmap(NULL, sb.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fdp, 0);
+    int size = strlen(FILE__);
+    FILE_SIZE = sb.st_size;
 
-  size_t n = 0;
-  char *memory_array[ARR_SIZE] = {NULL};
-
-  for (char *p = strtok(memory, "\n"); n < ARR_SIZE && p;
-       p = strtok(NULL, "\n"), ++n) {
-    memory_array[n] = p;
-  }
-
-  // ******* INITIALIZING THREADS AND MUTEX ******* //
-
-  pthread_t threads[THREADS];
-  pthread_mutex_init(&mutex, NULL);
-
-  // ** PARSING THROUGHT EACH LINE USING STRINGS ** //
-
-  int iter = 0, use = 0;
-  for (int j = 0; j < ceil(n / THREADS) + 1; j++) {
-    if (floor(n / THREADS) > iter) {
-      use = THREADS;
-    } else {
-      use = n % THREADS;
-    }
-
-    // ************ SPINNING THREADS **************** //
-
-    for (int i = 0; i < use; i++) {
-      int index = i + j * THREADS;
-      strcpy(word, argv[2]);
-      if (pthread_create(&threads[i % THREADS], NULL, thread,
-                         memory_array[index]) != 0) {
+    // ***************** SPINNING THREADS ********************* //
+    for (int i = 0; i < THREADS; i++) {
+      int start = i * FILE_SIZE / THREADS, end = (i + 1) * FILE_SIZE / THREADS;
+      pass[i].start = start;
+      pass[i].end = end;
+      if (pthread_create(&threads[i], NULL, thread, &pass[i]) != 0) {
         perror("thread failed to create\n");
       }
     }
 
-    // ************** JOINING THREADS **************** //
+    // ****************** JOINING THREADS ******************** //
 
-    for (int i = 0; i < use; i++) {
-      if (pthread_join(threads[i % THREADS], NULL) != 0) {
+    for (int i = 0; i < THREADS; i++) {
+      if (pthread_join(threads[i], NULL) != 0) {
         perror("failed to join\n");
       }
     }
-    iter++;
+
+    close(fdp);
+    pthread_mutex_destroy(&mutex);
+    fd = open(MYFIFO, O_WRONLY);
+    strcpy(tmp, DONE);
+    write(fd, DONE, DONE_SIZE);
+    close(fd);
+  } else if (strstr(INVALID, tmp)) {
+    fprintf(stderr, "INVALID FILE\n");
+    exit(FAILURE);
   }
 
-  // ***** DESTROYING MUTEX AND MEMORY SEGMENT ****** //
-  pthread_mutex_destroy(&mutex);
-  destroy_segment(filename);
-  #ifdef TIME
-  t = clock() - t;
-  double time_taken = ((double)t) / CLOCKS_PER_SEC;
-  printf("THE TIME:%f\n", time_taken);
-  #endif
-
-  return 0;
+  return SUCCESS;
 }
